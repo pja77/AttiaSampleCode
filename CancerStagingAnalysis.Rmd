@@ -1,0 +1,418 @@
+---
+title: "Cancer Staging Analysis using Epic Cosmos"
+author: "Peter Attia"
+output: pdf_document
+date: "2025-07-28"
+---
+
+## Introduction
+
+This program utlizes Epic Cosmos data that examined patients with laryngeal, pharyngeal, and pharyngeal cancer (based on AJCC sites) along with staging data.  A patient was rquired to have both the site and the staging data.
+
+In this dataset, while it attempted to look at patients and only characterize one stage per cancer site, in the event of diagnosis, these patients are duplicated, but each occurence looks at the pre and post 12 month MDD/anxiety incidence.
+
+MDD and anxiety was calculated using ICD-10 codes and were ENCOUNTER level diagnosis data, not PROBLEM list data. 
+
+Below code creates functions used for data imported to calculate 2 by 2 tables
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+
+library(dplyr)
+library(epiR)
+library(openxlsx)
+
+
+SummaryData_MDD <- function(cancername) {
+  analysis_matrix <- matrix(c(SummaryData_revise[cancername,"mdd_post_N"],
+                              SummaryData_revise[cancername,"nomdd_post_N"],
+                              SummaryData_revise[cancername,"mdd_pre_N"],
+                              SummaryData_revise[cancername,"nomdd_pre_N"]),
+                            nrow=2,byrow = TRUE)
+  
+    epi.2by2(analysis_matrix, method = "cross.sectional", conf.level = 0.95,elab = "Trach", olab = "MDD")
+  
+}
+
+SummaryData_Anxiety <- function(cancername) {
+  analysis_matrix <- matrix(c(SummaryData_revise[cancername,"anxiety_post_N"],
+                              SummaryData_revise[cancername,"noanxiety_post_N"],
+                              SummaryData_revise[cancername,"anxiety_pre_N"],
+                              SummaryData_revise[cancername,"noanxiety_pre_N"]),
+                            nrow=2,byrow = TRUE)
+  
+    epi.2by2(analysis_matrix, method = "cross.sectional", conf.level = 0.95,elab = "Trach", olab = "Anxiety")
+    
+  
+}
+
+stagingdata_mdd <- function(cancerds, group, cancername) {
+  
+  mdd_col <- paste0(cancername, "_mdd_num")
+  nomdd_col <- paste0(cancername, "_nomdd_num")
+  
+  
+  analysis_matrix <- matrix(c(cancerds[group,mdd_col],
+                              cancerds[group,nomdd_col],
+                              cancerds["Stage I",mdd_col],
+                              cancerds["Stage I",nomdd_col]),
+                            nrow=2, byrow= TRUE)
+
+    epi.2by2(analysis_matrix, method = "cross.sectional", conf.level = 0.95,elab = group, olab = "MDD")
+  
+}
+
+stagingdata_anxiety <- function(cancerds, group, cancername) {
+  
+  anxiety_col <- paste0(cancername, "_anxiety_num")
+  noanxiety_col <- paste0(cancername, "_noanxiety_num")
+  
+  
+  analysis_matrix <- matrix(c(cancerds[group,anxiety_col],
+                              cancerds[group,noanxiety_col],
+                              cancerds["Stage I",anxiety_col],
+                              cancerds["Stage I",noanxiety_col]),
+                            nrow=2, byrow= TRUE)
+
+    epi.2by2(analysis_matrix, method = "cross.sectional", conf.level = 0.95,elab = group, olab = "Anxiety")
+  
+}
+```
+
+## Data Imports
+
+This process imports data into the R enviornemnt. Due to the ease, I had it called in code as opposed of using CSV files.
+
+```{r cars}
+
+################ GENERAL ANALYSIS FOR TOP LEVEL PRE AND POST DIAGNOSIS INCIDENCE ###################
+# 1. Cancer names
+cancers <- c("Pharyngeal", "Laryngeal", "Lip and oral")
+
+# 2. Total N for each cancer type
+total_N <- c(34383, 13645, 17225)
+# 3. MDD N (12 months pre-diagnosis)
+mdd_pre_N <- c(1838, 881, 1177)
+# 4. Anxiety N (12 months pre-diagnosis)
+anxiety_pre_N <- c(2632, 1287, 1591)
+# 5. MDD N (12 months post-diagnosis)
+mdd_post_N <- c(2918, 1260, 2301)
+# 6. Anxiety N (12 months post-diagnosis)
+anxiety_post_N <- c(4487, 1947, 1712)
+
+SummaryData <- data.frame(cancers, total_N, mdd_pre_N, anxiety_pre_N, mdd_post_N, anxiety_post_N)
+
+SummaryData_revise <- SummaryData %>%
+  mutate(nomdd_pre_N = total_N -mdd_pre_N,
+         noanxiety_pre_N = total_N - anxiety_pre_N,
+         nomdd_post_N = total_N - mdd_post_N,
+         noanxiety_post_N = total_N - anxiety_post_N)
+
+row.names(SummaryData_revise) <- SummaryData_revise$cancers
+
+################ oral CANCER STAGING DATA ###################
+# Define variables
+oral_stage <- c("Stage 0", "Stage I", "Stage II", "Stage III", "Stage IV")
+oral_mdd_prop <- c(0.075, 0.104, 0.122, 0.137, 0.149)
+oral_anxiety_prop <- c(0.087, 0.078, 0.091, 0.099, 0.11)
+oral_total_n <- c(161, 2883, 2818, 3369, 10284)
+
+
+oralstage_wdx <- data.frame(oral_stage,oral_mdd_prop,oral_anxiety_prop,oral_total_n)
+oralstage_wdx_revise <- oralstage_wdx %>%
+  mutate(oral_nomdd_prop = 1 -oral_mdd_prop,
+         oral_noanxiety_prop = 1 - oral_anxiety_prop,
+         oral_mdd_num = round(oral_mdd_prop * oral_total_n, 0),
+         oral_anxiety_num = round(oral_anxiety_prop * oral_total_n,0),
+         oral_nomdd_num = oral_total_n - oral_mdd_num,
+         oral_noanxiety_num = oral_total_n - oral_anxiety_num)
+
+row.names(oralstage_wdx_revise) <- oralstage_wdx_revise$oral_stage
+
+################ Pharyngeal CANCER STAGING DATA ###################
+
+# Define variables
+pharyngeal_stage <- c("Stage 0", "Stage I", "Stage II", "Stage III", "Stage IV")
+pharyngeal_anxiety_prop <- c(NA, 0.125, 0.132, 0.137, 0.14)
+pharyngeal_mdd_prop <- c(NA, 0.079, 0.089, 0.091, 0.091)
+pharyngeal_total_n <- c(61, 12087, 7875, 6142, 11038)
+
+pharyngealstage_wdx <- data.frame(pharyngeal_stage, pharyngeal_mdd_prop, pharyngeal_anxiety_prop, pharyngeal_total_n)
+
+pharyngealstage_wdx_revise <- pharyngealstage_wdx %>%
+  mutate(
+    pharyngeal_nomdd_prop = 1 - pharyngeal_mdd_prop,
+    pharyngeal_noanxiety_prop = 1 - pharyngeal_anxiety_prop,
+    pharyngeal_mdd_num = round(pharyngeal_mdd_prop * pharyngeal_total_n, 0),
+    pharyngeal_anxiety_num = round(pharyngeal_anxiety_prop * pharyngeal_total_n, 0),
+    pharyngeal_nomdd_num = pharyngeal_total_n - pharyngeal_mdd_num,
+    pharyngeal_noanxiety_num = pharyngeal_total_n - pharyngeal_anxiety_num
+  )
+
+row.names(pharyngealstage_wdx_revise) <- pharyngealstage_wdx_revise$pharyngeal_stage
+
+################ Laryngeal CANCER STAGING DATA ###################
+
+# Define variables
+laryngeal_stage <- c("Stage 0", "Stage I", "Stage II", "Stage III", "Stage IV")
+laryngeal_anxiety_prop <- c(0.109, 0.103, 0.139, 0.168, 0.158)
+laryngeal_mdd_prop <- c(0.07, 0.071, 0.086, 0.105, 0.107)
+laryngeal_total_n <- c(330, 3412, 2198, 3397, 5859)
+
+# Create data frame and calculate derived values
+laryngealstage_wdx <- data.frame(laryngeal_stage, laryngeal_mdd_prop, laryngeal_anxiety_prop, laryngeal_total_n)
+
+laryngealstage_wdx_revise <- laryngealstage_wdx %>%
+  mutate(
+    laryngeal_nomdd_prop = 1 - laryngeal_mdd_prop,
+    laryngeal_noanxiety_prop = 1 - laryngeal_anxiety_prop,
+    laryngeal_mdd_num = round(laryngeal_mdd_prop * laryngeal_total_n, 0),
+    laryngeal_anxiety_num = round(laryngeal_anxiety_prop * laryngeal_total_n, 0),
+    laryngeal_nomdd_num = laryngeal_total_n - laryngeal_mdd_num,
+    laryngeal_noanxiety_num = laryngeal_total_n - laryngeal_anxiety_num
+  )
+
+row.names(laryngealstage_wdx_revise) <- laryngealstage_wdx_revise$laryngeal_stage
+
+```
+
+## General Data
+
+```{r pressure, echo=FALSE}
+
+## For each of these 2by2 tables, I save them into the R enironment for further use
+
+# MDD and Oral
+oral_gen_mdd <- SummaryData_MDD("Lip and oral")
+print(oral_gen_mdd)
+
+# Anxiety and Lip and Oral
+pharyngeal_gen_anxiety <- SummaryData_Anxiety("Lip and oral")
+print(pharyngeal_gen_anxiety)
+
+# MDD and Laryngeal
+laryngeal_gen_mdd <- SummaryData_MDD("Laryngeal")
+
+# Anxiety and Laryngeal
+SummaryData_Anxiety("Laryngeal")
+
+# MDD and pharyngeal
+SummaryData_MDD("Pharyngeal")
+
+#Anxiety and Lip and pharyngeal
+SummaryData_Anxiety("Pharyngeal")
+
+```
+
+## Staging Data
+
+### pharyngeal Cancer
+
+```{r}
+
+# Stage I vs Stage II oral MDD
+stage2oral_mdd <- stagingdata_mdd(oralstage_wdx_revise, "Stage II", "oral")
+print(stage2oral_mdd)
+
+# Stage I vs Stage III oral MDD
+stage3oral_mdd <- stagingdata_mdd(oralstage_wdx_revise, "Stage III", "oral")
+print(stage3oral_mdd)
+
+# Stage I vs Stage IV oral MDD
+stage4oral_mdd <- stagingdata_mdd(oralstage_wdx_revise, "Stage IV", "oral")
+print(stage4oral_mdd)
+
+
+
+
+# Stage I vs Stage II oral anxiety
+stage2oral_anxiety <- stagingdata_anxiety(oralstage_wdx_revise, "Stage II", "oral")
+print(stage2oral_anxiety)
+
+# Stage I vs Stage III oral anxiety
+stage3oral_anxiety <- stagingdata_anxiety(oralstage_wdx_revise, "Stage III", "oral")
+print(stage3oral_anxiety)
+
+# Stage I vs Stage IV oral anxiety
+stage4oral_anxiety <- stagingdata_anxiety(oralstage_wdx_revise, "Stage IV", "oral")
+print(stage4oral_anxiety)
+
+
+```
+
+### Pharyngeal Cancer
+```{r Pharyneal Cancer Depression}
+# Stage I vs Stage II pharyngeal MDD
+stage2pharyngeal_mdd <- stagingdata_mdd(pharyngealstage_wdx_revise, "Stage II", "pharyngeal")
+print(stage2pharyngeal_mdd)
+
+# Stage I vs Stage III pharyngeal MDD
+stage3pharyngeal_mdd <- stagingdata_mdd(pharyngealstage_wdx_revise, "Stage III", "pharyngeal")
+print(stage3pharyngeal_mdd)
+
+# Stage I vs Stage IV pharyngeal MDD
+stage4pharyngeal_mdd <- stagingdata_mdd(pharyngealstage_wdx_revise, "Stage IV", "pharyngeal")
+print(stage4pharyngeal_mdd)
+```
+
+```{r Pharyngeal Cancer Anxiety}
+# Stage I vs Stage II pharyngeal anxiety
+stage2pharyngeal_anxiety <- stagingdata_anxiety(pharyngealstage_wdx_revise, "Stage II", "pharyngeal")
+print(stage2pharyngeal_anxiety)
+
+# Stage I vs Stage III pharyngeal anxiety
+stage3pharyngeal_anxiety <- stagingdata_anxiety(pharyngealstage_wdx_revise, "Stage III", "pharyngeal")
+print(stage3pharyngeal_anxiety)
+
+# Stage I vs Stage IV pharyngeal anxiety
+stage4pharyngeal_anxiety <- stagingdata_anxiety(pharyngealstage_wdx_revise, "Stage IV", "pharyngeal")
+print(stage4pharyngeal_anxiety)
+```
+
+### Laryngeal Cancer
+
+```{r Laryngeal Cancer Analysis}
+
+# Stage I vs Stage II laryngeal MDD
+stage2laryngeal_mdd <- stagingdata_mdd(laryngealstage_wdx_revise, "Stage II", "laryngeal")
+print(stage2laryngeal_mdd)
+
+# Stage I vs Stage III laryngeal MDD
+stage3laryngeal_mdd <- stagingdata_mdd(laryngealstage_wdx_revise, "Stage III", "laryngeal")
+print(stage3laryngeal_mdd)
+
+# Stage I vs Stage IV laryngeal MDD
+stage4laryngeal_mdd <- stagingdata_mdd(laryngealstage_wdx_revise, "Stage IV", "laryngeal")
+print(stage4laryngeal_mdd)
+
+
+
+# Stage I vs Stage II laryngeal anxiety
+stage2laryngeal_anxiety <- stagingdata_anxiety(laryngealstage_wdx_revise, "Stage II", "laryngeal")
+print(stage2laryngeal_anxiety)
+
+# Stage I vs Stage III laryngeal anxiety
+stage3laryngeal_anxiety <- stagingdata_anxiety(laryngealstage_wdx_revise, "Stage III", "laryngeal")
+print(stage3laryngeal_anxiety)
+
+# Stage I vs Stage IV laryngeal anxiety
+stage4laryngeal_anxiety <- stagingdata_anxiety(laryngealstage_wdx_revise, "Stage IV", "laryngeal")
+print(stage4laryngeal_anxiety)
+
+
+```
+
+```{r Display Dataset Creation}
+
+oral_mdd_staging <- c(NA, "Reference", 
+                    paste(round(stage2oral_mdd[["massoc.summary"]][["est"]][1],2),
+                          " (",round(stage2oral_mdd[["massoc.summary"]][["lower"]][1],2), 
+                          "-", round(stage2oral_mdd[["massoc.summary"]][["upper"]][1],2),
+                          ")",sep = ""),
+                    paste(round(stage3oral_mdd[["massoc.summary"]][["est"]][1],2),
+                          " (",round(stage3oral_mdd[["massoc.summary"]][["lower"]][1],2), 
+                          "-", round(stage3oral_mdd[["massoc.summary"]][["upper"]][1],2),
+                          ")",sep = ""),
+                    paste(round(stage4oral_mdd[["massoc.summary"]][["est"]][1],2),
+                          " (",round(stage4oral_mdd[["massoc.summary"]][["lower"]][1],2), 
+                          "-", round(stage4oral_mdd[["massoc.summary"]][["upper"]][1],2),
+                          ")",sep = ""))
+
+oral_anxiety_staging <- c(NA, "Reference", 
+                    paste(round(stage2oral_anxiety[["massoc.summary"]][["est"]][1],2),
+                          " (",round(stage2oral_anxiety[["massoc.summary"]][["lower"]][1],2), 
+                          "-", round(stage2oral_anxiety[["massoc.summary"]][["upper"]][1],2),
+                          ")",sep = ""),
+                    paste(round(stage3oral_anxiety[["massoc.summary"]][["est"]][1],2),
+                          " (",round(stage3oral_anxiety[["massoc.summary"]][["lower"]][1],2), 
+                          "-", round(stage3oral_anxiety[["massoc.summary"]][["upper"]][1],2),
+                          ")",sep = ""),
+                    paste(round(stage4oral_anxiety[["massoc.summary"]][["est"]][1],2),
+                          " (",round(stage4oral_anxiety[["massoc.summary"]][["lower"]][1],2), 
+                          "-", round(stage4oral_anxiety[["massoc.summary"]][["upper"]][1],2),
+                          ")",sep = ""))
+
+oralstage_wdx_final <- cbind(oralstage_wdx_revise, oral_mdd_staging, oral_anxiety_staging)
+
+colnames(oralstage_wdx_final)
+
+oralstage_wdx_display <- select(oralstage_wdx_final, oral_stage, oral_total_n, oral_mdd_prop, oral_mdd_staging, oral_anxiety_prop, oral_anxiety_staging)
+
+
+
+laryngeal_mdd_staging <- c(NA, "Reference", 
+                    paste(round(stage2laryngeal_mdd[["massoc.summary"]][["est"]][1],2),
+                          " (",round(stage2laryngeal_mdd[["massoc.summary"]][["lower"]][1],2), 
+                          "-", round(stage2laryngeal_mdd[["massoc.summary"]][["upper"]][1],2),
+                          ")",sep = ""),
+                    paste(round(stage3laryngeal_mdd[["massoc.summary"]][["est"]][1],2),
+                          " (",round(stage3laryngeal_mdd[["massoc.summary"]][["lower"]][1],2), 
+                          "-", round(stage3laryngeal_mdd[["massoc.summary"]][["upper"]][1],2),
+                          ")",sep = ""),
+                    paste(round(stage4laryngeal_mdd[["massoc.summary"]][["est"]][1],2),
+                          " (",round(stage4laryngeal_mdd[["massoc.summary"]][["lower"]][1],2), 
+                          "-", round(stage4laryngeal_mdd[["massoc.summary"]][["upper"]][1],2),
+                          ")",sep = ""))
+
+laryngeal_anxiety_staging <- c(NA, "Reference", 
+                    paste(round(stage2laryngeal_anxiety[["massoc.summary"]][["est"]][1],2),
+                          " (",round(stage2laryngeal_anxiety[["massoc.summary"]][["lower"]][1],2), 
+                          "-", round(stage2laryngeal_anxiety[["massoc.summary"]][["upper"]][1],2),
+                          ")",sep = ""),
+                    paste(round(stage3laryngeal_anxiety[["massoc.summary"]][["est"]][1],2),
+                          " (",round(stage3laryngeal_anxiety[["massoc.summary"]][["lower"]][1],2), 
+                          "-", round(stage3laryngeal_anxiety[["massoc.summary"]][["upper"]][1],2),
+                          ")",sep = ""),
+                    paste(round(stage4laryngeal_anxiety[["massoc.summary"]][["est"]][1],2),
+                          " (",round(stage4laryngeal_anxiety[["massoc.summary"]][["lower"]][1],2), 
+                          "-", round(stage4laryngeal_anxiety[["massoc.summary"]][["upper"]][1],2),
+                          ")",sep = ""))
+
+laryngealstage_wdx_final <- cbind(laryngealstage_wdx_revise, laryngeal_mdd_staging, laryngeal_anxiety_staging)
+
+colnames(laryngealstage_wdx_final)
+
+laryngealstage_wdx_display <- select(laryngealstage_wdx_final, laryngeal_stage, laryngeal_total_n, laryngeal_mdd_prop, laryngeal_mdd_staging, laryngeal_anxiety_prop, laryngeal_anxiety_staging)
+
+
+pharyngeal_mdd_staging <- c(NA, "Reference", 
+                    paste(round(stage2pharyngeal_mdd[["massoc.summary"]][["est"]][1],2),
+                          " (",round(stage2pharyngeal_mdd[["massoc.summary"]][["lower"]][1],2), 
+                          "-", round(stage2pharyngeal_mdd[["massoc.summary"]][["upper"]][1],2),
+                          ")",sep = ""),
+                    paste(round(stage3pharyngeal_mdd[["massoc.summary"]][["est"]][1],2),
+                          " (",round(stage3pharyngeal_mdd[["massoc.summary"]][["lower"]][1],2), 
+                          "-", round(stage3pharyngeal_mdd[["massoc.summary"]][["upper"]][1],2),
+                          ")",sep = ""),
+                    paste(round(stage4pharyngeal_mdd[["massoc.summary"]][["est"]][1],2),
+                          " (",round(stage4pharyngeal_mdd[["massoc.summary"]][["lower"]][1],2), 
+                          "-", round(stage4pharyngeal_mdd[["massoc.summary"]][["upper"]][1],2),
+                          ")",sep = ""))
+
+pharyngeal_anxiety_staging <- c(NA, "Reference", 
+                    paste(round(stage2pharyngeal_anxiety[["massoc.summary"]][["est"]][1],2),
+                          " (",round(stage2pharyngeal_anxiety[["massoc.summary"]][["lower"]][1],2), 
+                          "-", round(stage2pharyngeal_anxiety[["massoc.summary"]][["upper"]][1],2),
+                          ")",sep = ""),
+                    paste(round(stage3pharyngeal_anxiety[["massoc.summary"]][["est"]][1],2),
+                          " (",round(stage3pharyngeal_anxiety[["massoc.summary"]][["lower"]][1],2), 
+                          "-", round(stage3pharyngeal_anxiety[["massoc.summary"]][["upper"]][1],2),
+                          ")",sep = ""),
+                    paste(round(stage4pharyngeal_anxiety[["massoc.summary"]][["est"]][1],2),
+                          " (",round(stage4pharyngeal_anxiety[["massoc.summary"]][["lower"]][1],2), 
+                          "-", round(stage4pharyngeal_anxiety[["massoc.summary"]][["upper"]][1],2),
+                          ")",sep = ""))
+
+pharyngealstage_wdx_final <- cbind(pharyngealstage_wdx_revise, pharyngeal_mdd_staging, pharyngeal_anxiety_staging)
+
+colnames(pharyngealstage_wdx_final)
+
+pharyngealstage_wdx_display <- select(pharyngealstage_wdx_final, pharyngeal_stage, pharyngeal_total_n, pharyngeal_mdd_prop, pharyngeal_mdd_staging, pharyngeal_anxiety_prop, pharyngeal_anxiety_staging)
+
+write.xlsx(pharyngealstage_wdx_display,"Pharyngeal.xlsx")
+write.xlsx(laryngealstage_wdx_display,"Laryngeal.xlsx")
+write.xlsx(oralstage_wdx_display,"Oral.xlsx")
+
+```
+
